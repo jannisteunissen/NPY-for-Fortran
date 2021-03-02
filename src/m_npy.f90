@@ -5,11 +5,12 @@ module m_npy
    private
 
    integer(4), parameter               :: p_un = 23
-   character, parameter                :: magic_num = achar(147) ! x93
-   character, parameter                :: major = achar(2)   !major *.npy version
-   character, parameter                :: minor = achar(0)   !minor *.npy version
-   character(len=*), parameter         :: zip_flag = "-q0"
-   character(len=*), parameter         :: magic_str = "NUMPY"
+   ! Magic number hex x93 is 147 (unsigned), signed this is -109
+   integer(int8), parameter    :: magic_num = int(-109, int8)
+   integer(int8), parameter    :: major = 2_int8 ! major *.npy version
+   integer(int8), parameter    :: minor = 0_int8 ! minor *.npy version
+   character(len=*), parameter :: zip_flag  = "-q0"
+   character(len=*), parameter :: magic_str = "NUMPY"
 
    interface save_npy
       module procedure write_int64_vec, write_int64_mtx, &
