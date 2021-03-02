@@ -4,12 +4,7 @@ module m_npy
   implicit none
   private
 
-  ! Magic number hex x93 is 147 (unsigned), signed this is -109
-  integer(int8), parameter    :: magic_num = int(-109, int8)
-  integer(int8), parameter    :: major = 2_int8 ! major *.npy version
-  integer(int8), parameter    :: minor = 0_int8 ! minor *.npy version
   character(len=*), parameter :: zip_flag  = "-q0"
-  character(len=*), parameter :: magic_str = "NUMPY"
 
   interface save_npy
     module procedure write_int64_vec, write_int64_mtx, &
@@ -49,7 +44,7 @@ contains
     character(len=*), intent(in) :: cmd
     integer(int32), intent(out)  :: stat
 
-    call execute_command_line(cmd, wait=.True., exitstat=stat)
+    call execute_command_line(cmd, wait=.true., exitstat=stat)
   end subroutine run_sys
 
   subroutine convert_to_zip(zipfile, npy_name)
@@ -68,6 +63,88 @@ contains
       write (*, *) "Can't execute rm command"
     endif
   end subroutine convert_to_zip
+
+  function dict_str(var_type, var_shape) result(str)
+    character(len=*), intent(in)  :: var_type
+    integer(int32), intent(in)    :: var_shape(:)
+    character(len=:), allocatable :: str
+    character(len=1024)           :: buffer
+    integer(int32)                :: total_size, my_size
+
+    ! https://numpy.org/devdocs/reference/generated/numpy.lib.format.html
+
+    ! The first 6 bytes are a magic string: exactly \x93NUMPY.
+
+    ! The next 1 byte is an unsigned byte: the major version number of the file
+    ! format, e.g. \x01.
+
+    ! The next 1 byte is an unsigned byte: the minor version number of the file
+    ! format, e.g. \x00. Note: the version of the file format is not tied to the
+    ! version of the numpy package.
+
+    ! The next 2 bytes form a little-endian unsigned short int: the length of
+    ! the header data HEADER_LEN.
+
+    ! The next HEADER_LEN bytes form the header data describing the array’s
+    ! format. It is an ASCII string which contains a Python literal expression
+    ! of a dictionary. It is terminated by a newline (\n) and padded with spaces
+    ! (\x20) to make the total of len(magic string) + 2 + len(length) +
+    ! HEADER_LEN be evenly divisible by 64 for alignment purposes.
+
+    buffer = "{'descr': '"//var_type// &
+         "', 'fortran_order': True, 'shape': ("// &
+         shape_str(var_shape)//"), }"
+
+    ! len(magic string) + 2 + len(length) + ending newline =
+    ! 6 + 2 + 4 + 1 = 13 bytes
+    total_size = len_trim(buffer) + 13
+
+    ! ensure total_size is divisible by 16 bytes
+    total_size = ((total_size + 15)/16) * 16
+    my_size = total_size - 12
+
+    ! End with newline
+    buffer(my_size:my_size) = achar(10)
+    str = buffer(1:my_size)
+  end function dict_str
+
+  function shape_str(var_shape) result(fin_str)
+    integer(int32), intent(in)    :: var_shape(:)
+    character(len=:), allocatable :: str, small_str, fin_str
+    integer(int32)                :: i, length, start, halt
+
+    length = 14*size(var_shape)
+    allocate (character(length) :: str)
+    allocate (character(14)     :: small_str)
+    str = " "
+
+    do i = 1, size(var_shape)
+      start = (i - 1)*length + 1
+      halt = i*length + 1
+      write (small_str, "(I13,A)") var_shape(i), ","
+      str = trim(str)//adjustl(small_str)
+    enddo
+
+    fin_str = trim(str)
+  end function shape_str
+
+  subroutine write_header(p_un, var_type, var_shape)
+    integer(int32), intent(in)   :: p_un
+    character(len=*), intent(in) :: var_type
+    integer(int32), intent(in)   :: var_shape(:)
+    integer(int32)               :: header_len
+
+    ! Magic number hex x93 is 147 (unsigned), signed this is -109
+    integer(int8), parameter    :: magic_num = int(-109, int8)
+    character(len=*), parameter :: magic_str = "NUMPY"
+    integer(int8), parameter    :: major = 2_int8 ! major *.npy version
+    integer(int8), parameter    :: minor = 0_int8 ! minor *.npy version
+
+    header_len = len(dict_str(var_type, var_shape))
+    write (p_un) magic_num, magic_str, major, minor
+    write (p_un) header_len
+    write (p_un) dict_str(var_type, var_shape)
+  end subroutine write_header
 
   subroutine addrpl_cmplx_sng_vec(zipfile, var_name, vec)
     complex(4), intent(in)           :: vec(:)
@@ -181,616 +258,301 @@ contains
     call convert_to_zip(zipfile, var_name//".npy")
   end subroutine addrpl_int64_mtx
 
-  Subroutine write_cmplx_sgn_mtx(filename, mtx)
+  subroutine write_cmplx_sgn_mtx(filename, mtx)
     character(len=*), intent(in) :: filename
     complex(4), intent(in)       :: mtx(:, :)
     character(len=*), parameter  :: var_type = "<c8"
-    integer(int32)               :: header_len, s_mtx(2), p_un
-
-    s_mtx = shape(mtx)
-    header_len = len(dict_str(var_type, s_mtx))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-    write (p_un) header_len
-    write (p_un) dict_str(var_type, s_mtx)
-
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(mtx))
     write (p_un) mtx
-
     close (unit=p_un)
-  End Subroutine write_cmplx_sgn_mtx
+  end subroutine write_cmplx_sgn_mtx
 
-  Subroutine write_cmplx_sgn_vec(filename, vec)
-    character(len=*), intent(in)     :: filename
-    complex(4), intent(in)           :: vec(:)
-    character(len=*), parameter      :: var_type = "<c8"
-    integer(int32)                       :: header_len, s_vec(1), p_un
-
-    s_vec = shape(vec)
-    header_len = len(dict_str(var_type, s_vec))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_vec)
-
+  subroutine write_cmplx_sgn_vec(filename, vec)
+    character(len=*), intent(in) :: filename
+    complex(4), intent(in)       :: vec(:)
+    character(len=*), parameter  :: var_type = "<c8"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(vec))
     write (p_un) vec
-
     close (unit=p_un)
-  End Subroutine write_cmplx_sgn_vec
+  end subroutine write_cmplx_sgn_vec
 
-  Subroutine write_cmplx_dbl_6dT(filename, tensor)
-    character(len=*), intent(in)     :: filename
-    complex(8), intent(in)           :: tensor(:, :, :, :, :, :)
-    character(len=*), parameter      :: var_type = "<c16"
-    integer(int32)                       :: header_len, p_un
-
-    header_len = len(dict_str(var_type, shape(tensor)))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, shape(tensor))
+  subroutine write_cmplx_dbl_6dT(filename, tensor)
+    character(len=*), intent(in) :: filename
+    complex(8), intent(in)       :: tensor(:, :, :, :, :, :)
+    character(len=*), parameter  :: var_type = "<c16"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(tensor))
     write (p_un) tensor
     close (unit=p_un)
-  End Subroutine write_cmplx_dbl_6dT
+  end subroutine write_cmplx_dbl_6dT
 
-  Subroutine write_cmplx_dbl_5dT(filename, tensor)
-    character(len=*), intent(in)     :: filename
-    complex(8), intent(in)           :: tensor(:, :, :, :, :)
-    character(len=*), parameter      :: var_type = "<c16"
-    integer(int32)                       :: header_len, p_un
-
-    header_len = len(dict_str(var_type, shape(tensor)))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, shape(tensor))
+  subroutine write_cmplx_dbl_5dT(filename, tensor)
+    character(len=*), intent(in) :: filename
+    complex(8), intent(in)       :: tensor(:, :, :, :, :)
+    character(len=*), parameter  :: var_type = "<c16"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(tensor))
     write (p_un) tensor
     close (unit=p_un)
-  End Subroutine write_cmplx_dbl_5dT
+  end subroutine write_cmplx_dbl_5dT
 
-  Subroutine write_cmplx_dbl_4dT(filename, tensor)
-    character(len=*), intent(in)     :: filename
-    complex(8), intent(in)           :: tensor(:, :, :, :)
-    character(len=*), parameter      :: var_type = "<c16"
-    integer(int32)                       :: header_len, p_un
-
-    header_len = len(dict_str(var_type, shape(tensor)))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, shape(tensor))
+  subroutine write_cmplx_dbl_4dT(filename, tensor)
+    character(len=*), intent(in) :: filename
+    complex(8), intent(in)       :: tensor(:, :, :, :)
+    character(len=*), parameter  :: var_type = "<c16"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(tensor))
     write (p_un) tensor
     close (unit=p_un)
-  End Subroutine write_cmplx_dbl_4dT
+  end subroutine write_cmplx_dbl_4dT
 
-  Subroutine write_cmplx_dbl_3dT(filename, tensor)
+  subroutine write_cmplx_dbl_3dT(filename, tensor)
     character(len=*), intent(in) :: filename
     complex(8), intent(in)       :: tensor(:, :, :)
     character(len=*), parameter  :: var_type = "<c16"
-    integer(int32)               :: header_len, p_un
-
-    header_len = len(dict_str(var_type, shape(tensor)))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, shape(tensor))
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(tensor))
     write (p_un) tensor
     close (unit=p_un)
-  End Subroutine write_cmplx_dbl_3dT
+  end subroutine write_cmplx_dbl_3dT
 
-  Subroutine write_cmplx_dbl_mtx(filename, mtx)
-    character(len=*), intent(in)     :: filename
-    complex(8), intent(in)           :: mtx(:, :)
-    character(len=*), parameter      :: var_type = "<c16"
-    integer(int32)                       :: header_len, s_mtx(2), p_un
-
-    s_mtx = shape(mtx)
-    header_len = len(dict_str(var_type, s_mtx))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_mtx)
-
+  subroutine write_cmplx_dbl_mtx(filename, mtx)
+    character(len=*), intent(in) :: filename
+    complex(8), intent(in)       :: mtx(:, :)
+    character(len=*), parameter  :: var_type = "<c16"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(mtx))
     write (p_un) mtx
-
     close (unit=p_un)
-  End Subroutine write_cmplx_dbl_mtx
+  end subroutine write_cmplx_dbl_mtx
 
-  Subroutine write_cmplx_dbl_vec(filename, vec)
-    character(len=*), intent(in)     :: filename
-    complex(8), intent(in)           :: vec(:)
-    character(len=*), parameter      :: var_type = "<c16"
-    integer(int32)                       :: header_len, s_vec(1), p_un
-
-    s_vec = shape(vec)
-    header_len = len(dict_str(var_type, s_vec))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_vec)
-
+  subroutine write_cmplx_dbl_vec(filename, vec)
+    character(len=*), intent(in) :: filename
+    complex(8), intent(in)       :: vec(:)
+    character(len=*), parameter  :: var_type = "<c16"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(vec))
     write (p_un) vec
-
     close (unit=p_un)
-  End Subroutine write_cmplx_dbl_vec
+  end subroutine write_cmplx_dbl_vec
 
-  Subroutine write_sng_3dT(filename, tensor)
-    character(len=*), intent(in)     :: filename
-    real(real32), intent(in)              :: tensor(:, :, :)
-    character(len=*), parameter      :: var_type = "<f4"
-    integer(int32)                       :: header_len, p_un
-
-    header_len = len(dict_str(var_type, shape(tensor)))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, shape(tensor))
+  subroutine write_sng_3dT(filename, tensor)
+    character(len=*), intent(in) :: filename
+    real(real32), intent(in)     :: tensor(:, :, :)
+    character(len=*), parameter  :: var_type = "<f4"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(tensor))
     write (p_un) tensor
     close (unit=p_un)
-  End Subroutine write_sng_3dT
+  end subroutine write_sng_3dT
 
-  Subroutine write_sng_4dT(filename, tensor)
-    character(len=*), intent(in)     :: filename
-    real(real32), intent(in)              :: tensor(:, :, :, :)
-    character(len=*), parameter      :: var_type = "<f4"
-    integer(int32)                       :: header_len, p_un
-
-    header_len = len(dict_str(var_type, shape(tensor)))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, shape(tensor))
+  subroutine write_sng_4dT(filename, tensor)
+    character(len=*), intent(in) :: filename
+    real(real32), intent(in)     :: tensor(:, :, :, :)
+    character(len=*), parameter  :: var_type = "<f4"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(tensor))
     write (p_un) tensor
     close (unit=p_un)
-  End Subroutine write_sng_4dT
+  end subroutine write_sng_4dT
 
-  Subroutine write_sng_mtx(filename, mtx)
-    character(len=*), intent(in)     :: filename
-    real(real32), intent(in)              :: mtx(:, :)
-    character(len=*), parameter      :: var_type = "<f4"
-    integer(int32)                       :: header_len, s_mtx(2), p_un
-
-    s_mtx = shape(mtx)
-    header_len = len(dict_str(var_type, s_mtx))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_mtx)
-
+  subroutine write_sng_mtx(filename, mtx)
+    character(len=*), intent(in) :: filename
+    real(real32), intent(in)     :: mtx(:, :)
+    character(len=*), parameter  :: var_type = "<f4"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(mtx))
     write (p_un) mtx
-
     close (unit=p_un)
-  End Subroutine write_sng_mtx
+  end subroutine write_sng_mtx
 
-  Subroutine write_sng_vec(filename, vec)
+  subroutine write_sng_vec(filename, vec)
     character(len=*), intent(in) :: filename
     real(real32), intent(in)          :: vec(:)
     character(len=*), parameter  :: var_type = "<f4"
-    integer(int32)               :: header_len, s_vec(1), p_un
-
-    s_vec = shape(vec)
-    header_len = len(dict_str(var_type, s_vec))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_vec)
-
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(vec))
     write (p_un) vec
-
     close (unit=p_un)
-  End Subroutine write_sng_vec
+  end subroutine write_sng_vec
 
-  Subroutine write_dbl_3dT(filename, tensor)
-    character(len=*), intent(in)     :: filename
-    real(real64), intent(in)              :: tensor(:, :, :)
-    character(len=*), parameter      :: var_type = "<f8"
-    integer(int32)                       :: header_len, p_un
-
-    header_len = len(dict_str(var_type, shape(tensor)))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, shape(tensor))
+  subroutine write_dbl_3dT(filename, tensor)
+    character(len=*), intent(in) :: filename
+    real(real64), intent(in)     :: tensor(:, :, :)
+    character(len=*), parameter  :: var_type = "<f8"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(tensor))
     write (p_un) tensor
     close (unit=p_un)
-  End Subroutine write_dbl_3dT
+  end subroutine write_dbl_3dT
 
-  Subroutine write_dbl_4dT(filename, tensor4)
-    character(len=*), intent(in)     :: filename
-    real(real64), intent(in)              :: tensor4(:, :, :, :)
-    character(len=*), parameter      :: var_type = "<f8"
-    integer(int32)                       :: header_len, p_un
-
-    header_len = len(dict_str(var_type, shape(tensor4)))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, shape(tensor4))
+  subroutine write_dbl_4dT(filename, tensor4)
+    character(len=*), intent(in) :: filename
+    real(real64), intent(in)     :: tensor4(:, :, :, :)
+    character(len=*), parameter  :: var_type = "<f8"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(tensor4))
     write (p_un) tensor4
     close (unit=p_un)
-  End Subroutine write_dbl_4dT
+  end subroutine write_dbl_4dT
 
-  Subroutine write_dbl_5dT(filename, tensor5)
-    character(len=*), intent(in)     :: filename
-    real(real64), intent(in)              :: tensor5(:, :, :, :, :)
-    character(len=*), parameter      :: var_type = "<f8"
-    integer(int32)                       :: header_len, p_un
-
-    header_len = len(dict_str(var_type, shape(tensor5)))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, shape(tensor5))
+  subroutine write_dbl_5dT(filename, tensor5)
+    character(len=*), intent(in) :: filename
+    real(real64), intent(in)     :: tensor5(:, :, :, :, :)
+    character(len=*), parameter  :: var_type = "<f8"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(tensor5))
     write (p_un) tensor5
     close (unit=p_un)
-  End Subroutine write_dbl_5dT
+  end subroutine write_dbl_5dT
 
-  Subroutine write_dbl_mtx(filename, mtx)
-    character(len=*), intent(in)     :: filename
-    real(real64), intent(in)              :: mtx(:, :)
-    character(len=*), parameter      :: var_type = "<f8"
-    integer(int32)                       :: header_len, s_mtx(2), p_un
-
-    s_mtx = shape(mtx)
-    header_len = len(dict_str(var_type, s_mtx))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_mtx)
-
+  subroutine write_dbl_mtx(filename, mtx)
+    character(len=*), intent(in) :: filename
+    real(real64), intent(in)     :: mtx(:, :)
+    character(len=*), parameter  :: var_type = "<f8"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(mtx))
     write (p_un) mtx
-
     close (unit=p_un)
-  End Subroutine write_dbl_mtx
+  end subroutine write_dbl_mtx
 
-  Subroutine write_dbl_vec(filename, vec)
-    character(len=*), intent(in)     :: filename
-    real(real64), intent(in)              :: vec(:)
-    character(len=*), parameter      :: var_type = "<f8"
-    integer(int32)                       :: header_len, s_vec(1), p_un
-
-    s_vec = shape(vec)
-    header_len = len(dict_str(var_type, s_vec))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_vec)
-
+  subroutine write_dbl_vec(filename, vec)
+    character(len=*), intent(in) :: filename
+    real(real64), intent(in)     :: vec(:)
+    character(len=*), parameter  :: var_type = "<f8"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(vec))
     write (p_un) vec
-
     close (unit=p_un)
-  End Subroutine write_dbl_vec
+  end subroutine write_dbl_vec
 
-  Subroutine write_int64_mtx(filename, mtx)
-    character(len=*), intent(in)     :: filename
-    integer(int64), intent(in)           :: mtx(:, :)
-    character(len=*), parameter      :: var_type = "<i8"
-    integer(int32)                       :: header_len, s_mtx(2), p_un
-
-    s_mtx = shape(mtx)
-    header_len = len(dict_str(var_type, s_mtx))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_mtx)
-
+  subroutine write_int64_mtx(filename, mtx)
+    character(len=*), intent(in) :: filename
+    integer(int64), intent(in)   :: mtx(:, :)
+    character(len=*), parameter  :: var_type = "<i8"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(mtx))
     write (p_un) mtx
-
     close (unit=p_un)
-  End Subroutine write_int64_mtx
+  end subroutine write_int64_mtx
 
-  Subroutine write_int64_vec(filename, vec)
-    character(len=*), intent(in)     :: filename
-    integer(int64), intent(in)           :: vec(:)
-    character(len=*), parameter      :: var_type = "<i8"
-    integer(int32)                       :: header_len, s_vec(1), p_un
-
-    s_vec = shape(vec)
-    header_len = len(dict_str(var_type, s_vec))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_vec)
-
+  subroutine write_int64_vec(filename, vec)
+    character(len=*), intent(in) :: filename
+    integer(int64), intent(in)   :: vec(:)
+    character(len=*), parameter  :: var_type = "<i8"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(vec))
     write (p_un) vec
-
     close (unit=p_un)
-  End Subroutine write_int64_vec
+  end subroutine write_int64_vec
 
-  Subroutine write_int32_mtx(filename, mtx)
-    character(len=*), intent(in)     :: filename
-    integer(int32), intent(in)           :: mtx(:, :)
-    character(len=*), parameter      :: var_type = "<i4"
-    integer(int32)                       :: header_len, s_mtx(2), p_un
-
-    s_mtx = shape(mtx)
-    header_len = len(dict_str(var_type, s_mtx))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_mtx)
-
+  subroutine write_int32_mtx(filename, mtx)
+    character(len=*), intent(in) :: filename
+    integer(int32), intent(in)   :: mtx(:, :)
+    character(len=*), parameter  :: var_type = "<i4"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(mtx))
     write (p_un) mtx
-
     close (unit=p_un)
-  End Subroutine write_int32_mtx
+  end subroutine write_int32_mtx
 
-  Subroutine write_int32_3d(filename, mtx)
-    character(len=*), intent(in)     :: filename
-    integer(int32), intent(in)           :: mtx(:,:,:)
-    character(len=*), parameter      :: var_type = "<i4"
-    integer(int32)                       :: header_len, s_mtx(3), p_un
-
-    s_mtx = shape(mtx)
-    header_len = len(dict_str(var_type, s_mtx))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_mtx)
-
+  subroutine write_int32_3d(filename, mtx)
+    character(len=*), intent(in) :: filename
+    integer(int32), intent(in)   :: mtx(:,:,:)
+    character(len=*), parameter  :: var_type = "<i4"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(mtx))
     write (p_un) mtx
-
     close (unit=p_un)
-  End Subroutine write_int32_3d
+  end subroutine write_int32_3d
 
-  Subroutine write_int32_vec(filename, vec)
-    character(len=*), intent(in)     :: filename
-    integer(int32), intent(in)           :: vec(:)
-    character(len=*), parameter      :: var_type = "<i4"
-    integer(int32)                       :: header_len, s_vec(1), p_un
-
-    s_vec = shape(vec)
-    header_len = len(dict_str(var_type, s_vec))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_vec)
-
+  subroutine write_int32_vec(filename, vec)
+    character(len=*), intent(in) :: filename
+    integer(int32), intent(in)   :: vec(:)
+    character(len=*), parameter  :: var_type = "<i4"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(vec))
     write (p_un) vec
-
     close (unit=p_un)
-  End Subroutine write_int32_vec
+  end subroutine write_int32_vec
 
-  Subroutine write_int16_mtx(filename, mtx)
-    character(len=*), intent(in)     :: filename
-    integer(int16), intent(in)           :: mtx(:, :)
-    character(len=*), parameter      :: var_type = "<i2"
-    integer(int32)                       :: header_len, s_mtx(2), p_un
-
-    s_mtx = shape(mtx)
-    header_len = len(dict_str(var_type, s_mtx))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_mtx)
-
+  subroutine write_int16_mtx(filename, mtx)
+    character(len=*), intent(in) :: filename
+    integer(int16), intent(in)   :: mtx(:, :)
+    character(len=*), parameter  :: var_type = "<i2"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(mtx))
     write (p_un) mtx
-
     close (unit=p_un)
-  End Subroutine write_int16_mtx
+  end subroutine write_int16_mtx
 
-  Subroutine write_int16_vec(filename, vec)
-    character(len=*), intent(in)     :: filename
-    integer(int16), intent(in)           :: vec(:)
-    character(len=*), parameter      :: var_type = "<i2"
-    integer(int32)                       :: header_len, s_vec(1), p_un
-
-    s_vec = shape(vec)
-    header_len = len(dict_str(var_type, s_vec))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_vec)
-
+  subroutine write_int16_vec(filename, vec)
+    character(len=*), intent(in) :: filename
+    integer(int16), intent(in)   :: vec(:)
+    character(len=*), parameter  :: var_type = "<i2"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(vec))
     write (p_un) vec
-
     close (unit=p_un)
-  End Subroutine write_int16_vec
+  end subroutine write_int16_vec
 
-  Subroutine write_int8_mtx(filename, mtx)
-    character(len=*), intent(in)     :: filename
-    integer(int8), intent(in)           :: mtx(:, :)
-    character(len=*), parameter      :: var_type = "<i1"
-    integer(int32)                       :: header_len, s_mtx(2), p_un
-
-    s_mtx = shape(mtx)
-    header_len = len(dict_str(var_type, s_mtx))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_mtx)
-
+  subroutine write_int8_mtx(filename, mtx)
+    character(len=*), intent(in) :: filename
+    integer(int8), intent(in)    :: mtx(:, :)
+    character(len=*), parameter  :: var_type = "<i1"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(mtx))
     write (p_un) mtx
-
     close (unit=p_un)
-  End Subroutine write_int8_mtx
+  end subroutine write_int8_mtx
 
-  Subroutine write_int8_3d(filename, mtx)
-    character(len=*), intent(in)     :: filename
-    integer(int8), intent(in)           :: mtx(:,:,:)
-    character(len=*), parameter      :: var_type = "<i1"
-    integer(int32)                       :: header_len, s_mtx(3), p_un
-
-    s_mtx = shape(mtx)
-    header_len = len(dict_str(var_type, s_mtx))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_mtx)
-
+  subroutine write_int8_3d(filename, mtx)
+    character(len=*), intent(in) :: filename
+    integer(int8), intent(in)    :: mtx(:,:,:)
+    character(len=*), parameter  :: var_type = "<i1"
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(mtx))
     write (p_un) mtx
-
     close (unit=p_un)
-  End Subroutine write_int8_3d
+  end subroutine write_int8_3d
 
-  Subroutine write_int8_vec(filename, vec)
+  subroutine write_int8_vec(filename, vec)
     character(len=*), intent(in) :: filename
     integer(int8), intent(in)    :: vec(:)
     character(len=*), parameter  :: var_type = "<i1"
-    integer(int32)               :: header_len, s_vec(1), p_un
-
-    s_vec = shape(vec)
-    header_len = len(dict_str(var_type, s_vec))
-
-    open (newunit=p_un, file=filename, form="unformatted", &
-         access="stream")
-    write (p_un) magic_num, magic_str, major, minor
-
-    write (p_un) header_len
-
-    write (p_un) dict_str(var_type, s_vec)
-
+    integer(int32)               :: p_un
+    open (newunit=p_un, file=filename, form="unformatted", access="stream")
+    call write_header(p_un, var_type, shape(vec))
     write (p_un) vec
-
     close (unit=p_un)
-  End Subroutine write_int8_vec
+  end subroutine write_int8_vec
 
-  function dict_str(var_type, var_shape) result(str)
-    character(len=*), intent(in)   :: var_type
-    integer(int32), intent(in)         :: var_shape(:)
-    character(len=:), allocatable  :: str
-    integer(int32)                     :: cnt
-
-    cnt = len("{'descr': '")
-    cnt = cnt + len(var_type)
-    cnt = cnt + len("', 'fortran_order': True, 'shape': (")
-    cnt = cnt + len(shape_str(var_shape))
-    cnt = cnt + len(",), }")
-    do while (mod(cnt + 10, 16) /= 0)
-      cnt = cnt + 1
-    enddo
-
-    allocate (character(cnt) :: str)
-
-    str = "{'descr': '"//var_type// &
-         "', 'fortran_order': True, 'shape': ("// &
-         shape_str(var_shape)//"), }"
-
-    do while (mod(len(str) + 11, 16) /= 0)
-      str = str//" "
-    enddo
-
-    str = str//achar(10)
-
-  end function dict_str
-
-  function shape_str(var_shape) result(fin_str)
-    integer(int32), intent(in)        :: var_shape(:)
-    character(len=:), allocatable :: str, small_str, fin_str
-    integer(int32)                    :: i, length, start, halt
-
-    length = 14*size(var_shape)
-    allocate (character(length) :: str)
-    allocate (character(14)     :: small_str)
-    str = " "
-
-    do i = 1, size(var_shape)
-      start = (i - 1)*length + 1
-      halt = i*length + 1
-      write (small_str, "(I13,A)") var_shape(i), ","
-      str = trim(str)//adjustl(small_str)
-    enddo
-
-    fin_str = trim(str)
-  end function shape_str
 end module m_npy
