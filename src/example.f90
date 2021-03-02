@@ -1,4 +1,5 @@
 program main
+    use iso_fortran_env
     use m_npy
 
     integer     :: i,j
@@ -13,10 +14,10 @@ program main
 
     do i=1,10
       do j=1,11
-         i1(i,j) = 10*i+j
-         i2(i,j) = 10*i+j
-         i4(i,j) = 10*i+j
-         i8(i,j) = 10*i+j
+         i1(i,j) = int(10*i+j, int8)
+         i2(i,j) = int(10*i+j, int16)
+         i4(i,j) = int(10*i+j, int32)
+         i8(i,j) = int(10*i+j, int64)
          r4(i,j) = 1000*i + j
          r8(i,j) = 1000*i + j
          c4(i,j) = cmplx(i,j)
