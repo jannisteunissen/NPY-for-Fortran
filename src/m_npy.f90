@@ -1,5 +1,8 @@
 module m_npy
+   use iso_fortran_env
+
    implicit none
+   private
 
    integer(4), parameter               :: p_un = 23
    character, parameter                :: magic_num = achar(147) ! x93
@@ -36,6 +39,9 @@ module m_npy
          addrpl_cmplx_dbl_vec, addrpl_cmplx_dbl_mtx, &
          addrpl_cmplx_sng_vec, addrpl_cmplx_sng_mtx
    end interface add_npz
+
+   public :: save_npy
+   public :: add_npz
 
 contains
    subroutine run_sys(cmd, stat)
