@@ -4,7 +4,8 @@ module m_npy
   implicit none
   private
 
-  character(len=*), parameter :: zip_flag  = "-q0"
+  ! Suffix for temporary .npy files
+  character(len=*), parameter :: npy_suffix = '.npy'
 
   interface save_npy
     module procedure write_int64_vec, write_int64_mtx, &
@@ -37,6 +38,8 @@ module m_npy
 
   public :: save_npy
   public :: add_npz
+  public :: remove_file
+  public :: add_to_zip
 
 contains
 
@@ -47,22 +50,34 @@ contains
     call execute_command_line(cmd, wait=.true., exitstat=stat)
   end subroutine run_sys
 
-  subroutine convert_to_zip(zipfile, npy_name)
-    character(len=*), intent(in) :: zipfile, npy_name
-    integer(int32)               :: succ
+  ! Add npy file to a zip file and remove it
+  subroutine add_to_zip(zipfile, filename, keep_file)
+    character(len=*), intent(in) :: zipfile   ! Name of zip file
+    character(len=*), intent(in) :: filename  ! Name of file to add
+    logical, intent(in)          :: keep_file ! Whether to keep 'filename'
+    integer(int32)               :: stat
 
-    ! just store and be quite while zipping
-    call run_sys("zip "//zip_flag//" "//zipfile &
-         //" "//npy_name, succ)
-    if (succ /= 0) then
-      write (*, *) "Can't execute zip command"
+    ! Be quiet while zipping
+    character(len=*), parameter  :: zip_command = "zip -q0"
+
+    call run_sys(zip_command//" "//zipfile//" "//filename, stat)
+    if (stat /= 0) then
+       print *, zip_command//" "//zipfile//" "//filename
+       error stop "add_to_zip: Can't execute zip command"
     endif
 
-    call run_sys("rm "//npy_name, succ)
-    if (succ /= 0) then
-      write (*, *) "Can't execute rm command"
-    endif
-  end subroutine convert_to_zip
+    if (.not. keep_file) then
+       call remove_file(filename)
+    end if
+  end subroutine add_to_zip
+
+  subroutine remove_file(filename)
+    character(len=*), intent(in) :: filename
+    integer                      :: p_un, stat
+
+    open(newunit=p_un, iostat=stat, file=filename, status='old')
+    if (stat == 0) close(p_un, status='delete')
+  end subroutine remove_file
 
   function dict_str(var_type, var_shape) result(str)
     character(len=*), intent(in)  :: var_type
@@ -101,6 +116,8 @@ contains
 
     ! ensure total_size is divisible by 16 bytes
     total_size = ((total_size + 15)/16) * 16
+
+    ! Size of dict_str includes the ending newline (so -12 instead of -13)
     my_size = total_size - 12
 
     ! End with newline
@@ -149,113 +166,113 @@ contains
   subroutine addrpl_cmplx_sng_vec(zipfile, var_name, vec)
     complex(4), intent(in)           :: vec(:)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", vec)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, vec)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_cmplx_sng_vec
 
   subroutine addrpl_cmplx_sng_mtx(zipfile, var_name, mtx)
     complex(4), intent(in)       :: mtx(:, :)
     character(len=*), intent(in) :: zipfile, var_name
-    call save_npy(var_name//".npy", mtx)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, mtx)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_cmplx_sng_mtx
 
   subroutine addrpl_cmplx_dbl_vec(zipfile, var_name, vec)
     complex(8), intent(in)           :: vec(:)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", vec)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, vec)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_cmplx_dbl_vec
 
   subroutine addrpl_cmplx_dbl_mtx(zipfile, var_name, mtx)
     complex(8), intent(in)           :: mtx(:, :)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", mtx)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, mtx)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_cmplx_dbl_mtx
 
   subroutine addrpl_dbl_vec(zipfile, var_name, vec)
     real(real64), intent(in)           :: vec(:)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", vec)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, vec)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_dbl_vec
 
   subroutine addrpl_dbl_mtx(zipfile, var_name, mtx)
     real(real64), intent(in)           :: mtx(:, :)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", mtx)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, mtx)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_dbl_mtx
 
   subroutine addrpl_sng_vec(zipfile, var_name, vec)
     real(real32), intent(in)           :: vec(:)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", vec)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, vec)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_sng_vec
 
   subroutine addrpl_sng_mtx(zipfile, var_name, mtx)
     real(real32), intent(in)           :: mtx(:, :)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", mtx)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, mtx)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_sng_mtx
 
   subroutine addrpl_int8_vec(zipfile, var_name, vec)
     integer(int8), intent(in)           :: vec(:)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", vec)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, vec)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_int8_vec
 
   subroutine addrpl_int8_mtx(zipfile, var_name, mtx)
     integer(int8), intent(in)           :: mtx(:, :)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", mtx)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, mtx)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_int8_mtx
 
   subroutine addrpl_int16_vec(zipfile, var_name, vec)
     integer(int16), intent(in)           :: vec(:)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", vec)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, vec)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_int16_vec
 
   subroutine addrpl_int16_mtx(zipfile, var_name, mtx)
     integer(int16), intent(in)           :: mtx(:, :)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", mtx)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, mtx)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_int16_mtx
 
   subroutine addrpl_int32_vec(zipfile, var_name, vec)
     integer(int32), intent(in)           :: vec(:)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", vec)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, vec)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_int32_vec
 
   subroutine addrpl_int32_mtx(zipfile, var_name, mtx)
     integer(int32), intent(in)           :: mtx(:, :)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", mtx)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, mtx)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_int32_mtx
 
   subroutine addrpl_int64_vec(zipfile, var_name, vec)
     integer(int64), intent(in)           :: vec(:)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", vec)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, vec)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_int64_vec
 
   subroutine addrpl_int64_mtx(zipfile, var_name, mtx)
     integer(int64), intent(in)           :: mtx(:, :)
     character(len=*), intent(in)     :: zipfile, var_name
-    call save_npy(var_name//".npy", mtx)
-    call convert_to_zip(zipfile, var_name//".npy")
+    call save_npy(var_name//npy_suffix, mtx)
+    call add_to_zip(zipfile, var_name//npy_suffix, .false.)
   end subroutine addrpl_int64_mtx
 
   subroutine write_cmplx_sgn_mtx(filename, mtx)
