@@ -25,17 +25,6 @@ program main
       enddo
    enddo
 
-   ! Add to zip and remove temporary files
-   call remove_file("example_1.npz")
-   call add_npz("example_1.npz", "i1", i1)
-   call add_npz("example_1.npz", "i2", i2)
-   call add_npz("example_1.npz", "i4", i4)
-   call add_npz("example_1.npz", "i8", i8)
-   call add_npz("example_1.npz", "c8", c8)
-   call add_npz("example_1.npz", "c4", c4)
-   call add_npz("example_1.npz", "r8", r8)
-   call add_npz("example_1.npz", "r4", r4)
-
    call save_npy("i1.npy", i1)
    call save_npy("i2.npy", i2)
    call save_npy("i4.npy", i4)
@@ -45,7 +34,7 @@ program main
    call save_npy("r8.npy", r8)
    call save_npy("r4.npy", r4)
 
-   ! Add to zip and keep original files
+   ! Add to zip while keeping original files
    call remove_file("example_2.npz")
    call add_to_zip("example_2.npz", "i1.npy", .true.)
    call add_to_zip("example_2.npz", "i2.npy", .true.)
@@ -55,5 +44,8 @@ program main
    call add_to_zip("example_2.npz", "c4.npy", .true.)
    call add_to_zip("example_2.npz", "r8.npy", .true.)
    call add_to_zip("example_2.npz", "r4.npy", .true.)
+
+   ! A custom name can also be used
+   call add_to_zip("example_2.npz", "i1.npy", .true., "i1_copy")
 
 end program main
